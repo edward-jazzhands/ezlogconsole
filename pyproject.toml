@@ -1,0 +1,19 @@
+[project]
+name = "ezlogconsole"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Edward Jazzhands", email = "ed.jazzhands@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "rich>=14.3.3",
+]
+
+[project.scripts]
+ezlogconsole = "ezlogconsole:receiver.run"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
