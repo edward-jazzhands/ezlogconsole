@@ -1,7 +1,10 @@
 """Sender/Handler module for Ed's EZ Log Console - The cross-platform log console.
+This class is a child of the standard library SocketHandler.
+
 For python development, add this JsonSocketHandler as a handler for the standard library
 logger. It will send JSON messages to the EZ Log Console receiver.  The default 
-settings are configured for local development."""
+settings are configured for local development.
+"""
 
 import logging
 import logging.handlers as handlers
@@ -50,9 +53,15 @@ class JsonSocketHandler(handlers.SocketHandler):
         # are already baked into msg, so they're redundant and potentially 
         # carry non-serializable objects.
         data.pop('args', None)
-            
-        # Encode to JSON and then to bytes
-        s = json.dumps(data).encode('utf-8')
+
+        # Encode to JSON and then to bytes    
+        try:
+            s = json.dumps(data).encode('utf-8')
+        except Exception as e:
+            # This could happen if there was anything still in the record's
+            # attributes that wasn't serializable.
+            e.add_note("Failure in JsonSocketHandler to encode record to JSON.")
+            raise e
         
         # Prefix with 4-byte length (Big-Endian) just like the original
         return struct.pack(">L", len(s)) + s

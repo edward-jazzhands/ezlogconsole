@@ -4,8 +4,8 @@ sent to it from any process that can reach it. The default settings are
 configured for local development.
 
 For other python apps, you can add this library and import the `JsonSocketHandler` 
-class from the `sender` module. Or just copy it. It's 12 lines of code, not including 
-the comments and imports."""
+class from the `sender` module. Or just copy it. It's 16 lines of code, not including 
+the comments and imports, because its a child of the standard library SocketHandler."""
 
 # Standard library
 # from __future__ import annotations
@@ -19,54 +19,89 @@ import sys
 import os
 import threading
 import json
+import re
+
+# from dataclasses import dataclass
 
 # Rich
 from rich.rule import Rule
-from rich.console import Console
-from rich.text import Text, Span
-from rich.segment import Segment
-from rich.logging import RichHandler
+from rich.console import Console #, ConsoleOptions, RenderResult
+from rich.text import Text
+from rich.style import Style
+# from rich.segment import Segment
+# from rich.logging import RichHandler
 
 
 LEVEL_COLORS: dict[int, str] = {
     logging.DEBUG: "cyan",
     logging.INFO: "green",
     logging.WARNING: "yellow",
-    logging.ERROR: "red",
-    logging.CRITICAL: "bold red",
+    logging.ERROR: "bold bright_red",
+    logging.CRITICAL: "white on red",
 }
 
-# Create a lock to keep the shared set safe
-set_lock = threading.Lock()
-
 # Create the rich console
+# This has to be at the top level so the entire module can access it.
 console = Console()
+
+class LogRecordServer(socketserver.ThreadingTCPServer):
+    # Allow reusing the port immediately after the server stops
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass):
+        # We need to keep track of the active senders.
+        self.active_senders = {}
+
+        # Create a lock to keep the shared set safe
+        self.set_lock = threading.Lock()
+
+        super().__init__(server_address, RequestHandlerClass)
 
 
 class LogRecordHandler(socketserver.StreamRequestHandler):
     # Since we pass this into the LogRecordServer in the main function
     # below, which is a ThreadingTCPServer, the TCP Server creates a new
-    # LogRecordHandler instance for each client connection in its own thread.
+    # LogRecordHandler instance in its own thread for each client connection.
     # So keep in mind that connections can't share data through this class
     # unless you were to store it as a class attribute. But that's not
     # a good idea here 
+
+    def __init__(self, request, client_address, server):
+        # super.init calls handle(), so any stuff that we want to add must
+        # go before that.
+
+        # Grab the lock and active senders attributes from the server object.
+        # We want all the handlers to use the server's lock to be thread-safe.
+        # We don't set a default value here because we want it to fail fast.
+        try:
+            self.set_lock: threading.Lock = getattr(server, "set_lock")
+        except AttributeError:
+            missing_attribute_error("set_lock")
+            # A handler can't raise errors (they get swallowed by the logger), so
+            # we have to exit the program manually. This has to be an os-level
+            # exit call, even using server.shutdown() doesn't work here.
+            os._exit(1)
+        try:
+            self.active_senders: dict[Any, str | None] = getattr( 
+                server, "active_senders"
+            )
+        except AttributeError:
+            missing_attribute_error("active_senders")
+            os._exit(1)
+
+        # Add the client address to the active senders dict. `None` in this
+        # case just means we don't know the identity string from the sender yet.
+        # But we still want to add the client address to the dict immediately.
+        with self.set_lock:
+            self.active_senders[client_address] = None
+
+        console.print(Rule(characters="- - "))
+        console.print(f"[green]{client_address} connected.") 
+
+        super().__init__(request, client_address, server)
+
         
     def handle(self) -> None:
-
-        # The self.client_address attribute is typed as `Any` by the logging lib.
-        # So trying to be more specific here has no effect on the type checker.
-        self.active_senders: dict[Any, str | None] | None = getattr( 
-            self.server, "active_senders", None
-        )
-        if self.active_senders is None:
-            console.print(
-                "[bright_red]FATAL ERROR: Could not find `active_senders` attribute "
-                "on the server object. This LogRecordHandler is designed to work "
-                "with the LogRecordServer class, so if you're seeing this error, "
-                "you must have used it with a different server class. Ensure "
-                "your duck typing matches what is expected."
-            )
-            os._exit(1)
 
         while True:
             try:
@@ -78,15 +113,9 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 chunk = self.rfile.read(4)
 
                 # If the length is less than 4 bytes, it means the connection has been 
-                # closed. In that case, we can just break out of the loop.                
+                # closed. In that case, we should break out of the loop.                
                 if len(chunk) < 4:
-                    if self.client_address in self.active_senders:
-                        console.print(
-                            f"[blue]{self.active_senders[self.client_address]} "
-                            f"{self.client_address} disconnected."
-                        )
-                        with set_lock:
-                            del self.active_senders[self.client_address]
+                    self.remove_client_address()
                     break
 
                 # 2. This converts those 4 raw bytes into a Python integer. The format 
@@ -107,12 +136,13 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 
                 # 3. Read JSON payload
                 data = self.rfile.read(length)
+
             except (ConnectionResetError, BrokenPipeError):
-                # Connection was closed
-                console.print(f"[blue]{self.client_address} disconnected.")
-                break 
+                self.remove_client_address()
+                break
             except Exception as e:
                 console.print(f"[bright_red]Error reading data-stream: {e}")
+                self.remove_client_address()
                 break
                 
             try:
@@ -124,19 +154,54 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 # For JSON decoding errors, we just skip and continue
                 continue
 
-            # check known senders
-            if self.client_address not in self.active_senders:
-                with set_lock:
+            # If we have a process name, see if the sender is still named 'None'.
+            if record.processName and not self.active_senders[self.client_address]:
+                with self.set_lock:
+                    # We use processName as the "identity" of the sender because
+                    # its a built-in attribute of the LogRecord class, and it's
+                    # always set to None if the sender didn't set it.
+
+                    # Thus, we have an optional way for the sender to identify
+                    # itself. This really does nothing aside from showing the name
+                    # of the app that connected to the log console. But its nice.
                     self.active_senders[self.client_address] = record.processName
-                console.print(Rule(characters="- - "))
                 console.print(
-                    f"[green]{record.processName} {self.client_address} connected."
-                ) 
+                    f"[green]{self.client_address} identified as "
+                    f"{record.processName}"
+                )
 
             # aaaand print it
             print_record(record)
 
 
+    def remove_client_address(self) -> None:
+        
+        # Check if the client was given a name in the active senders dict.
+        # The client address is added to the active senders dict in the
+        # constructor, so logically this should be a safe operation.
+        if self.active_senders[self.client_address]:
+            console.print(
+                f"[blue]{self.active_senders[self.client_address]} "
+                f"{self.client_address} disconnected."
+            )
+        else:
+            console.print(f"[blue]{self.client_address} disconnected.")
+
+        with self.set_lock:
+            del self.active_senders[self.client_address]
+
+
+def missing_attribute_error(attrib: str) -> None:
+
+    console.print(
+        f"[bright_red]FATAL ERROR: Could not find `{attrib}` attribute "
+        "on the server object. This LogRecordHandler is designed to work "
+        "with the LogRecordServer class, so if you're seeing this error, "
+        "you must have used it with a different server class. Ensure "
+        "your duck typing matches what is expected."
+    )
+
+            
 def print_record(record: logging.LogRecord) -> None:
 
     # NOTE: One might traditionally use the Rich Handler for this, as
@@ -160,37 +225,47 @@ def print_record(record: logging.LogRecord) -> None:
     ts = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
     line.append(f"{ts} ", style="dim")
     line.append(f"[{record.levelname}] ", style=color)
-
-    # for future upgrades to formatting the message:
-    # message = record.getMessage()
-
-    line.append(record.getMessage())
+    # Colorize message using the function below:
+    line.append(message_colorizer(record.getMessage()))
     line.append(f"  ({record.filename}:{record.lineno})", style="grey23 italic")
     console.print(line)
 
-    # NOTE: This would make a good customization option in the future
-    # (eg. switch between RichHandler and my own Text-based formatting)
+    # Now we want to check if there's an exception attached to the record.
+    # If there is, we want to print it out.
+    # NOTE: Whether to show this should be a config option in the future.
+    if record.exc_info:
+        console.print(f" {record.exc_info}")
 
-class LogRecordServer(socketserver.ThreadingTCPServer):
-    # Allow reusing the port immediately after the server stops
-    allow_reuse_address = True
+    # NOTE: It could make a good customization option in the future to
+    # switch between RichHandler and my own Text-based formatting
 
-    def __init__(self, server_address, RequestHandlerClass):
-        # This is the only change from the original class.
-        # We need to keep track of the active senders.
-        self.active_senders = {}
+def message_colorizer(message: str) -> Text:
 
-        super().__init__(server_address, RequestHandlerClass)
+    richtxt = Text(message)
+
+    # Colorize the word 'True' in the message, if it exists:
+    for match in re.finditer(r"(True)", message):
+        richtxt.stylize(Style(color="blue", bold=True, italic=True), match.start(), match.end())
+
+    # Colorize the word 'False' in the message, if it exists:
+    for match in re.finditer(r"(False)", message):
+        richtxt.stylize(Style(color="bright_red", bold=True, italic=True), match.start(), match.end())
+
+    # Look for any POSIX-style file paths in the message:
+    for match in re.finditer(r"(/[^/ ]+)", message):
+        richtxt.stylize(Style(color="yellow", italic=True), match.start(), match.end())
+
+    return richtxt
 
 
 def main():
 
-    host = "localhost"  #! This could be an option in the future
+    host = "localhost"  #! These should be CLI options in the future
     port = logging.handlers.DEFAULT_TCP_LOGGING_PORT  # python default is 9020
 
     with LogRecordServer((host, port), LogRecordHandler) as server:
         console.print(f"[cyan]EZ Log Console initialized.")
-        console.print(f"[dim]Listening on {host}:{port}[/dim]")
+        console.print(f"Listening on {host}:{port}")
         server.serve_forever()
 
 def run():
@@ -198,7 +273,7 @@ def run():
     try:
         main()
     except KeyboardInterrupt:
-        console.print("bright_red]  [Quitting EZ Log Console]")
+        console.print("[bright_red]  [Quitting EZ Log Console]")
         sys.exit(0)
     except Exception as e:
         console.print(f"[bright_red]ERROR WITH CONSOLE ITSELF")
