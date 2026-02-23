@@ -1,12 +1,26 @@
 [project]
 name = "ezlogconsole"
 version = "0.1.0"
-description = "Add your description here"
+description = "An ultra simple, modern, JSON-based logging console and handler combo"
 readme = "README.md"
 authors = [
     { name = "Edward Jazzhands", email = "ed.jazzhands@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["python", "logging", "debug", "logger", "console"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
 dependencies = [
     "click>=8.3.1",
     "rich>=14.3.3",
@@ -18,3 +32,38 @@ ezlogconsole = "ezlogconsole:receiver.run"
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
+
+[project.urls]
+Repository = "https://github.com/edward-jazzhands/ezpubsub"
+Changelog = "https://github.com/edward-jazzhands/ezpubsub/blob/master/CHANGELOG.md"
+
+
+##########################
+# Dev Dependency Configs #
+##########################
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.31.0",
+    "black>=25.1.0",
+    "mypy>=1.17.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.4",
+]
+
+[tool.black]
+line-length = 100
+
+[tool.mypy]
+pretty = true
+strict = true
+
+[tool.basedpyright]
+include = ["src"]
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+# This is necessary for pytest to automatically utilize
+# the pytest-asyncio plugin
+asyncio_mode = "auto"
