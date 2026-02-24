@@ -63,7 +63,7 @@ reset: nuke install
 # Run the .github/scripts files and push the tags
 release: sync-tags
   bash .github/scripts/release.sh && \
-  git push --follow-tags
+  git push --tags
 
   # git push --tags does not push commits to your main branch (or any other branch). It only 
   # uploads the "tag objects"—which are essentially just small pointers that say, "This 
@@ -77,3 +77,6 @@ release: sync-tags
 # Syncs the tags from origin to local
 sync-tags:
   git fetch --prune origin "+refs/tags/*:refs/tags/*"
+
+sync-ci:
+  curl -fsSL https://raw.githubusercontent.com/edward-jazzhands/ci-shared-python/main/sync.sh | bash
