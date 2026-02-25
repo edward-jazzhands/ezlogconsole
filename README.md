@@ -19,7 +19,7 @@ The modern way to send log records over a socket is to use JSON. This is a much 
 
 Then also factor in using the Rich library for formatting the log records with colors and other things, and the Click library for adding CLI options to the console. It becomes quite a lot of work just to build yourself a modern safe logging receiver console.
 
-I also wanted something that integrates with the standard library's logging module. So put it al together, and you've got EZLogConsole.
+I also wanted something that integrates with the standard library's logging module. So put it all together, and you've got EZLogConsole.
 
 ## Install as tool
 
