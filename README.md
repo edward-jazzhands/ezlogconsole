@@ -7,7 +7,7 @@
 [![badge](https://img.shields.io/badge/Requires_Python->=3.11-blue&logo=python)](https://python.org)
 [![badge](https://img.shields.io/badge/license-MIT-blue)](https://opensource.org/license/mit)
 
-An ultra-simple, modern, and JSON-based logging console with an included logging handler for the standard library's `logging` module. You can also just copy paste the code for the logging handler if you don't want to add it as a project dependency. Either way, it'll connect the standard library logger to the console, and pretty-print the logs in a nice, readable format.
+An ultra-simple, modern, and JSON-based logging console with an included logging handler for the Python standard library's `logging` module. You can also just copy paste the code for the logging handler if you don't want to add it as a project dependency. Either way, it'll connect the standard library logger to the console, and pretty-print the logs in a nice, readable format.
 
 This first alpha release is only designed with python log records in mind, but under the hood its just a simple TCP server that decodes JSON and prints it to the console. This means any process from any language can send logs to the console. This will be better supported in the future.
 
