@@ -1,5 +1,7 @@
 # EZLogConsole
 
+<img alt="preview" src="https://edward-jazzhands.github.io/assets/ezlogconsole/screenshot1.png" />
+
 [![badge](https://img.shields.io/pypi/v/ezlogconsole)](https://pypi.org/project/ezlogconsole/)
 [![badge](https://img.shields.io/github/v/release/edward-jazzhands/ezlogconsole)](https://github.com/edward-jazzhands/ezlogconsole/releases/latest)
 [![badge](https://img.shields.io/badge/Requires_Python->=3.11-blue&logo=python)](https://python.org)
