@@ -65,14 +65,14 @@ release: sync-tags
   bash .github/scripts/release.sh && \
   git push --tags
 
-  # git push --tags does not push commits to your main branch (or any other branch). It only 
-  # uploads the "tag objects"—which are essentially just small pointers that say, "This 
-  # specific commit hash has the name v1.0."
+# git push --tags does not push commits to your main branch (or any other branch). It only 
+# uploads the "tag objects"—which are essentially just small pointers that say, "This 
+# specific commit hash has the name v1.0."
 
-  # Because a tag is just metadata sitting "on top" of a commit that usually already exists 
-  # on the server, pushing a tag doesn't change the branch itself. And so the push request
-  # is not blocked by Github's branch protection rules even if its configured to block 
-  # pushes to the main branch.
+# Because a tag is just metadata sitting "on top" of a commit that usually already exists 
+# on the server, pushing a tag doesn't change the branch itself. And so the push request
+# is not blocked by Github's branch protection rules even if its configured to block 
+# pushes to the main branch.
 
 # Syncs the tags from origin to local
 sync-tags:
