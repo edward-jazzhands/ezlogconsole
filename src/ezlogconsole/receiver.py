@@ -3,16 +3,18 @@ This server/receiver just takes JSON on a TCP socket, so it can have messages
 sent to it from any process that can reach it. The default settings are
 configured for local development.
 
-For other python apps, you can add this library and import the `JsonSocketHandler` 
-class from the `sender` module. Or just copy it. It's 16 lines of code, not including 
+For other python apps, you can add this library and import the `JsonSocketHandler`
+class from the `sender` module. Or just copy it. It's 16 lines of code, not including
 the comments and imports, because its a child of the standard library SocketHandler."""
 
 # Standard library
 # from __future__ import annotations
-from typing import Any
+from typing import Any, TypeAlias
 import logging
 import logging.handlers
 import socketserver
+from socketserver import BaseRequestHandler
+from socket import socket
 import struct
 from datetime import datetime
 import sys
@@ -25,9 +27,10 @@ import re
 
 # Rich
 from rich.rule import Rule
-from rich.console import Console #, ConsoleOptions, RenderResult
+from rich.console import Console  # , ConsoleOptions, RenderResult
 from rich.text import Text
 from rich.style import Style
+
 # from rich.segment import Segment
 # from rich.logging import RichHandler
 
@@ -40,17 +43,24 @@ LEVEL_COLORS: dict[int, str] = {
     logging.CRITICAL: "white on red",
 }
 
+# I couldn't just import theirs because its marked private and the
+# type checker doesn't like it.
+_RequestType: TypeAlias = socket | tuple[bytes, socket]
+
 # Create the rich console
 # This has to be at the top level so the entire module can access it.
 console = Console()
+
 
 class LogRecordServer(socketserver.ThreadingTCPServer):
     # Allow reusing the port immediately after the server stops
     allow_reuse_address = True
 
-    def __init__(self, server_address, RequestHandlerClass):
+    def __init__(
+        self, server_address: tuple[str, int], RequestHandlerClass: type[BaseRequestHandler]
+    ):
         # We need to keep track of the active senders.
-        self.active_senders = {}
+        self.active_senders: dict[Any, str | None] = {}
 
         # Create a lock to keep the shared set safe
         self.set_lock = threading.Lock()
@@ -64,9 +74,11 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
     # LogRecordHandler instance in its own thread for each client connection.
     # So keep in mind that connections can't share data through this class
     # unless you were to store it as a class attribute. But that's not
-    # a good idea here 
+    # a good idea here
 
-    def __init__(self, request, client_address, server):
+    def __init__(
+        self, request: _RequestType, client_address: tuple[str, int], server: LogRecordServer
+    ):
         # super.init calls handle(), so any stuff that we want to add must
         # go before that.
 
@@ -82,9 +94,7 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
             # exit call, even using server.shutdown() doesn't work here.
             os._exit(1)
         try:
-            self.active_senders: dict[Any, str | None] = getattr( 
-                server, "active_senders"
-            )
+            self.active_senders: dict[Any, str | None] = getattr(server, "active_senders")
         except AttributeError:
             missing_attribute_error("active_senders")
             os._exit(1)
@@ -96,32 +106,31 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
             self.active_senders[client_address] = None
 
         console.print(Rule(characters="- - "))
-        console.print(f"[green]{client_address} connected.") 
+        console.print(f"[green]{client_address} connected.")
 
         super().__init__(request, client_address, server)
 
-        
     def handle(self) -> None:
 
         while True:
             try:
                 # 1. Every TCP packet that Python's SocketHandler sends over the wire is
-                # prefixed with a 4-byte header that encodes the length of the payload 
-                # that follows. So before you can read the packet, you need 
-                # to read those 4 bytes first to know how much is coming next. 
+                # prefixed with a 4-byte header that encodes the length of the payload
+                # that follows. So before you can read the packet, you need
+                # to read those 4 bytes first to know how much is coming next.
                 # rfile.read(4) blocks until all 4 bytes arrive or the connection drops.
                 chunk = self.rfile.read(4)
 
-                # If the length is less than 4 bytes, it means the connection has been 
-                # closed. In that case, we should break out of the loop.                
+                # If the length is less than 4 bytes, it means the connection has been
+                # closed. In that case, we should break out of the loop.
                 if len(chunk) < 4:
                     self.remove_client_address()
                     break
 
-                # 2. This converts those 4 raw bytes into a Python integer. The format 
-                # string ">L" means big-endian (>) unsigned long (L), which is the format 
-                # Python's SocketHandler uses when it writes the length prefix on the sender 
-                # side. struct.unpack always returns a tuple even when there's one 
+                # 2. This converts those 4 raw bytes into a Python integer. The format
+                # string ">L" means big-endian (>) unsigned long (L), which is the format
+                # Python's SocketHandler uses when it writes the length prefix on the sender
+                # side. struct.unpack always returns a tuple even when there's one
                 # value, so [0] pulls out that single integer.
                 length = struct.unpack(">L", chunk)[0]
 
@@ -133,7 +142,7 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 if length > 10000:
                     console.print(f"[bright_red]Error: Log message length too long: {length}")
                     continue
-                
+
                 # 3. Read JSON payload
                 data = self.rfile.read(length)
 
@@ -144,38 +153,29 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 console.print(f"[bright_red]Error reading data-stream: {e}")
                 self.remove_client_address()
                 break
-                
+
             try:
                 # 4. Decode and Process
-                log_dict = json.loads(data.decode('utf-8'))
+                log_dict = json.loads(data.decode("utf-8"))
                 record = logging.makeLogRecord(log_dict)
             except (json.JSONDecodeError, UnicodeDecodeError) as e:
                 console.print(f"[bright_red]Error decoding JSON: {e}")
                 # For JSON decoding errors, we just skip and continue
                 continue
 
-            # If we have a process name, see if the sender is still named 'None'.
-            if record.processName and not self.active_senders[self.client_address]:
+            # If we have a record name, see if the sender is still named 'None'.
+            # It's required for python LogRecords but not necessarily for
+            # other languages, so I'd like to leave the door open.
+            if record.name and not self.active_senders[self.client_address]:
                 with self.set_lock:
-                    # We use processName as the "identity" of the sender because
-                    # its a built-in attribute of the LogRecord class, and it's
-                    # always set to None if the sender didn't set it.
-
-                    # Thus, we have an optional way for the sender to identify
-                    # itself. This really does nothing aside from showing the name
-                    # of the app that connected to the log console. But its nice.
-                    self.active_senders[self.client_address] = record.processName
-                console.print(
-                    f"[green]{self.client_address} identified as "
-                    f"{record.processName}"
-                )
+                    self.active_senders[self.client_address] = record.name
+                console.print(f"[green]{self.client_address} identified as " f"{record.name}")
 
             # aaaand print it
             print_record(record)
 
-
     def remove_client_address(self) -> None:
-        
+
         # Check if the client was given a name in the active senders dict.
         # The client address is added to the active senders dict in the
         # constructor, so logically this should be a safe operation.
@@ -201,7 +201,7 @@ def missing_attribute_error(attrib: str) -> None:
         "your duck typing matches what is expected."
     )
 
-            
+
 def print_record(record: logging.LogRecord) -> None:
 
     # NOTE: One might traditionally use the Rich Handler for this, as
@@ -221,7 +221,7 @@ def print_record(record: logging.LogRecord) -> None:
     # the console word wrap do its thing.
 
     color = LEVEL_COLORS.get(record.levelno, "white")
-    line = Text() 
+    line = Text()
     ts = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
     line.append(f"{ts} ", style="dim")
     line.append(f"[{record.levelname}] ", style=color)
@@ -239,6 +239,7 @@ def print_record(record: logging.LogRecord) -> None:
     # NOTE: It could make a good customization option in the future to
     # switch between RichHandler and my own Text-based formatting
 
+
 def message_colorizer(message: str) -> Text:
 
     richtxt = Text(message)
@@ -249,7 +250,9 @@ def message_colorizer(message: str) -> Text:
 
     # Colorize the word 'False' in the message, if it exists:
     for match in re.finditer(r"(False)", message):
-        richtxt.stylize(Style(color="bright_red", bold=True, italic=True), match.start(), match.end())
+        richtxt.stylize(
+            Style(color="bright_red", bold=True, italic=True), match.start(), match.end()
+        )
 
     # Look for any POSIX-style file paths in the message:
     for match in re.finditer(r"(/[^/ ]+)", message):
@@ -258,7 +261,7 @@ def message_colorizer(message: str) -> Text:
     return richtxt
 
 
-def main():
+def main() -> None:
 
     host = "localhost"  #! These should be CLI options in the future
     port = logging.handlers.DEFAULT_TCP_LOGGING_PORT  # python default is 9020
@@ -268,17 +271,19 @@ def main():
         console.print(f"Listening on {host}:{port}")
         server.serve_forever()
 
-def run():
+
+def run() -> None:
 
     try:
         main()
     except KeyboardInterrupt:
         console.print("[bright_red]  [Quitting EZ Log Console]")
         sys.exit(0)
-    except Exception as e:
+    except Exception:
         console.print(f"[bright_red]ERROR WITH CONSOLE ITSELF")
         console.print_exception(word_wrap=True)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     run()

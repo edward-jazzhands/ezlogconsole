@@ -2,7 +2,7 @@
 This class is a child of the standard library SocketHandler.
 
 For python development, add this JsonSocketHandler as a handler for the standard library
-logger. It will send JSON messages to the EZ Log Console receiver.  The default 
+logger. It will send JSON messages to the EZ Log Console receiver.  The default
 settings are configured for local development.
 """
 
@@ -14,7 +14,9 @@ import struct
 
 class JsonSocketHandler(handlers.SocketHandler):
 
-    def __init__(self, host: str = "localhost", port: int | None = handlers.DEFAULT_TCP_LOGGING_PORT):
+    def __init__(
+        self, host: str = "localhost", port: int | None = handlers.DEFAULT_TCP_LOGGING_PORT
+    ):
         """Initializes the handler with a specific host address and port. Default host
         is 'localhost' and default port is 9020.
 
@@ -29,39 +31,41 @@ class JsonSocketHandler(handlers.SocketHandler):
     # to a dictionary and then encoding it to JSON. It just happens that this
     # is the best shortcut to build a JSON Socket Handler. Otherwise recreating
     # a similar class would be much more work.
-    def makePickle(self, record):
+    def makePickle(self, record: logging.LogRecord) -> bytes:
         """OVERRIDE by JsonSocketHandler. This does NOT pickle the record.
         It converts it to a dictionary and then encodes it to JSON."""
 
+        super().makePickle(record)
+
         # Convert the LogRecord to a dictionary
         data = record.__dict__.copy()
-        
+
         # 2. Handle the Exception/Traceback safely
         if record.exc_info:
-            # If the record has an exception, we use the formatter to 
+            # If the record has an exception, we use the formatter to
             # turn the traceback object into a JSON-friendly string.
             formatter = self.formatter if self.formatter else logging.Formatter()
 
-            data['exc_info'] = formatter.formatException(record.exc_info)
-            
+            data["exc_info"] = formatter.formatException(record.exc_info)
+
         # 3. Clean up other non-serializable fields (optional but safe)
         # Some records contain objects that JSON hates. We ensure 'msg' is a string.
-        data['msg'] = record.getMessage()
+        data["msg"] = record.getMessage()
 
         # 4. Remove args from the dictionary (optional but safe)
-        # We want to remove args because once getMessage() has been, called the args 
-        # are already baked into msg, so they're redundant and potentially 
+        # We want to remove args because once getMessage() has been, called the args
+        # are already baked into msg, so they're redundant and potentially
         # carry non-serializable objects.
-        data.pop('args', None)
+        data.pop("args", None)
 
-        # Encode to JSON and then to bytes    
+        # Encode to JSON and then to bytes
         try:
-            s = json.dumps(data).encode('utf-8')
+            s = json.dumps(data).encode("utf-8")
         except Exception as e:
             # This could happen if there was anything still in the record's
             # attributes that wasn't serializable.
             e.add_note("Failure in JsonSocketHandler to encode record to JSON.")
             raise e
-        
+
         # Prefix with 4-byte length (Big-Endian) just like the original
         return struct.pack(">L", len(s)) + s

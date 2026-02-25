@@ -26,7 +26,7 @@ format:
 
 # Runs pytest, exits with 0 if no issues are found
 test:
-  @uv run pytest tests -vvv
+  @uv run pytest tests -svvv
 
 # Run the Nox testing suite for comprehensive testing
 nox:
