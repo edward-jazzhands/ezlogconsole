@@ -69,10 +69,16 @@ logger.info("Hello, world!")
 
 **Logging Receiver**
 
-After you've installed the EZLogConsole as a tool using either UV or PipX, you can run it from the command line:
+After you've installed the EZLogConsole either as a tool or into your project environment, you can run it from the command line:
 
 ```sh
 ezlogconsole
+```
+
+This assumes you've activated the environment. If you've installed into the local environment using UV, you'd generally run it with:
+
+```sh
+uv run ezlogconsole
 ```
 
 This will start the EZLogConsole receiver on the default port (9020). 
