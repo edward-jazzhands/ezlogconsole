@@ -8,8 +8,7 @@ class from the `sender` module. Or just copy it. It's 16 lines of code, not incl
 the comments and imports, because its a child of the standard library SocketHandler."""
 
 # Standard library
-# from __future__ import annotations
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypedDict
 import errno
 import logging
 import logging.handlers
@@ -24,17 +23,13 @@ import threading
 import json
 import re
 
-# from dataclasses import dataclass
-
-# Rich
+# Rich and Click
 from rich.rule import Rule
-from rich.console import Console  # , ConsoleOptions, RenderResult
+from rich.console import Console
 from rich.text import Text
 from rich.style import Style
-
-# from rich.segment import Segment
-# from rich.logging import RichHandler
-
+from rich.logging import RichHandler
+import click
 
 LEVEL_COLORS: dict[int, str] = {
     logging.DEBUG: "cyan",
@@ -52,19 +47,42 @@ _RequestType: TypeAlias = socket | tuple[bytes, socket]
 # This has to be at the top level so the entire module can access it.
 console = Console()
 
+# Rich log handler is here as an option for the user
+rich_handler = RichHandler(
+    console=console,
+    log_time_format="[%X]",
+)
+
+
+class Config(TypedDict):
+    max_bytes: int
+    rich_handler: bool
+    exceptions: bool
+
 
 class LogRecordServer(socketserver.ThreadingTCPServer):
     # Allow reusing the port immediately after the server stops
     allow_reuse_address = True
 
     def __init__(
-        self, server_address: tuple[str, int], RequestHandlerClass: type[BaseRequestHandler]
+        self,
+        server_address: tuple[str, int],
+        RequestHandlerClass: type[BaseRequestHandler],
+        max_bytes: int = 10000,
+        rich_handler: bool = False,
+        exceptions: bool = False,
     ):
         # We need to keep track of the active senders.
         self.active_senders: dict[Any, str | None] = {}
 
         # Create a lock to keep the shared set safe
         self.set_lock = threading.Lock()
+
+        self.config: Config = {
+            "max_bytes": max_bytes,
+            "rich_handler": rich_handler,
+            "exceptions": exceptions,
+        }
 
         super().__init__(server_address, RequestHandlerClass)
 
@@ -83,21 +101,16 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
         # super.init calls handle(), so any stuff that we want to add must
         # go before that.
 
-        # Grab the lock and active senders attributes from the server object.
-        # We want all the handlers to use the server's lock to be thread-safe.
-        # We don't set a default value here because we want it to fail fast.
+        attr = ""
         try:
-            self.set_lock: threading.Lock = getattr(server, "set_lock")
-        except AttributeError:
-            missing_attribute_error("set_lock")
-            # A handler can't raise errors (they get swallowed by the logger), so
-            # we have to exit the program manually. This has to be an os-level
-            # exit call, even using server.shutdown() doesn't work here.
-            os._exit(1)
-        try:
+            attr = "active_senders"
             self.active_senders: dict[Any, str | None] = getattr(server, "active_senders")
+            attr = "set_lock"
+            self.set_lock: threading.Lock = getattr(server, "set_lock")
+            attr = "config"
+            self.config: Config = getattr(server, "config")
         except AttributeError:
-            missing_attribute_error("active_senders")
+            missing_attribute_error(attr)
             os._exit(1)
 
         # Add the client address to the active senders dict. `None` in this
@@ -105,6 +118,9 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
         # But we still want to add the client address to the dict immediately.
         with self.set_lock:
             self.active_senders[client_address] = None
+
+        # We want all the handlers to use the server's lock to be thread-safe.
+        # We don't set a default value here because we want it to fail fast.
 
         console.print(Rule(characters="- - "))
         console.print(f"[green]{client_address} connected.")
@@ -139,8 +155,7 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 # who knows what the sender is sending us.
                 # A typical log message in JSON is a few hundred bytes. Here I've set
                 # the limit to 10kb. That should be plenty for most people.
-                # NOTE: This could be a config option in the future.
-                if length > 10000:
+                if length > self.config["max_bytes"]:
                     console.print(f"[bright_red]Error: Log message length too long: {length}")
                     continue
 
@@ -173,7 +188,7 @@ class LogRecordHandler(socketserver.StreamRequestHandler):
                 console.print(f"[green]{self.client_address} identified as " f"{record.name}")
 
             # aaaand print it
-            print_record(record)
+            print_record(record, self.config)
 
     def remove_client_address(self) -> None:
 
@@ -203,42 +218,34 @@ def missing_attribute_error(attrib: str) -> None:
     )
 
 
-def print_record(record: logging.LogRecord) -> None:
+def print_record(record: logging.LogRecord, config: Config) -> None:
 
-    # NOTE: One might traditionally use the Rich Handler for this, as
-    # shown below. But I don't really like the formatting that much, I find
-    # its not great for very skinny log consoles. So I designed my own
-    # formatting using the Text class. But below is the code for the
-    # traditional easy way of doing this:
+    if config["rich_handler"]:
+        rich_handler.emit(record)
 
-    # rich_handler = RichHandler(
-    #     console=console,
-    #     log_time_format="[%X]",
-    # )
-    # rich_handler.emit(record)
+    else:
+        # NOTE: One might traditionally use the Rich Handler for this (above). But I
+        # find the formatting is not great for very skinny log consoles. So I designed
+        # my own formatting using the Text class.
 
-    # My code below is designed to look good on skinny consoles.
-    # It does this by putting everything in a single line and letting
-    # the console word wrap do its thing.
+        # My code below is designed to look good on skinny consoles.
+        # It does this by putting everything in a single line and letting
+        # the console word wrap do its thing.
 
-    color = LEVEL_COLORS.get(record.levelno, "white")
-    line = Text()
-    ts = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
-    line.append(f"{ts} ", style="dim")
-    line.append(f"[{record.levelname}] ", style=color)
-    # Colorize message using the function below:
-    line.append(message_colorizer(record.getMessage()))
-    line.append(f"  ({record.filename}:{record.lineno})", style="grey23 italic")
-    console.print(line)
+        color = LEVEL_COLORS.get(record.levelno, "white")
+        line = Text()
+        ts = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
+        line.append(f"{ts} ", style="dim")
+        line.append(f"[{record.levelname}] ", style=color)
+        # Colorize message using the function below:
+        line.append(message_colorizer(record.getMessage()))
+        line.append(f"  ({record.filename}:{record.lineno})", style="grey23 italic")
+        console.print(line)
 
-    # Now we want to check if there's an exception attached to the record.
-    # If there is, we want to print it out.
-    # NOTE: Whether to show this should be a config option in the future.
-    if record.exc_info:
-        console.print(f" {record.exc_info}")
-
-    # NOTE: It could make a good customization option in the future to
-    # switch between RichHandler and my own Text-based formatting
+        # Now we want to check if there's an exception attached to the record.
+        # If there is, we want to print it out.
+        if record.exc_info and config["exceptions"]:
+            console.print(f" {record.exc_info}")
 
 
 def message_colorizer(message: str) -> Text:
@@ -262,24 +269,65 @@ def message_colorizer(message: str) -> Text:
     return richtxt
 
 
-def main() -> None:
+@click.command()
+@click.option("--host", "-h", default="localhost", help="Host to listen on", show_default=True)
+@click.option(
+    "--port",
+    "-p",
+    default=logging.handlers.DEFAULT_TCP_LOGGING_PORT,
+    help="Port to listen on",
+    show_default=True,
+)
+@click.option(
+    "--max-bytes",
+    "-m",
+    default=10000,
+    help="Maximum bytes to read per log message",
+    show_default=True,
+)
+@click.option(
+    "--rich-handler",
+    "-r",
+    is_flag=True,
+    default=False,
+    help="Use standard RichHandler instead of my own skinny-console formatter",
+)
+@click.option(
+    "--exceptions",
+    "-e",
+    is_flag=True,
+    default=False,
+    help="Show full exception tracebacks in log messages",
+)
+def main(host: str, port: int, max_bytes: int, rich_handler: bool, exceptions: bool) -> None:
+    """EZ Log Console - The python logging console.
 
-    host = "localhost"  #! These should be CLI options in the future
-    port = logging.handlers.DEFAULT_TCP_LOGGING_PORT  # python default is 9020
+    Primarily designed to be used with the included JSON socket handler
+    for python logging.
+    """
+    server_address = (host, port)
 
-    with LogRecordServer((host, port), LogRecordHandler) as server:
+    with LogRecordServer(
+        server_address=server_address,
+        RequestHandlerClass=LogRecordHandler,
+        max_bytes=max_bytes,
+        rich_handler=rich_handler,
+        exceptions=exceptions,
+    ) as server:
         console.print("[cyan]EZ Log Console initialized.")
         console.print(f"Listening on {host}:{port}")
+        console.print(
+            f"Config: max_bytes={max_bytes}, rich_handler={rich_handler}, exceptions={exceptions}"
+        )
         server.serve_forever()
 
 
 def run() -> None:
 
     try:
-        main()
-    except KeyboardInterrupt:
+        main(standalone_mode=False)
+    except (click.Abort, KeyboardInterrupt):
         console.print("[bright_red]  [Quitting EZ Log Console]")
-        sys.exit(0)
     except Exception as e:
         if isinstance(e, OSError) and e.errno == errno.EADDRINUSE:
             console.print(
