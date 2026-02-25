@@ -1,6 +1,6 @@
 [project]
 name = "ezlogconsole"
-version = "0.1.0"
+version = "0.2.0"
 description = "An ultra simple, modern, JSON-based logging console and handler combo"
 readme = "README.md"
 authors = [
@@ -48,7 +48,6 @@ dev = [
     "black>=25.1.0",
     "mypy>=1.17.0",
     "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
     "ruff>=0.12.4",
 ]
 
@@ -66,4 +65,4 @@ typeCheckingMode = "strict"
 [tool.pytest.ini_options]
 # This is necessary for pytest to automatically utilize
 # the pytest-asyncio plugin
-asyncio_mode = "auto"
+# asyncio_mode = "auto"

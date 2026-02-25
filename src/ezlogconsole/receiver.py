@@ -10,6 +10,7 @@ the comments and imports, because its a child of the standard library SocketHand
 # Standard library
 # from __future__ import annotations
 from typing import Any, TypeAlias
+import errno
 import logging
 import logging.handlers
 import socketserver
@@ -267,7 +268,7 @@ def main() -> None:
     port = logging.handlers.DEFAULT_TCP_LOGGING_PORT  # python default is 9020
 
     with LogRecordServer((host, port), LogRecordHandler) as server:
-        console.print(f"[cyan]EZ Log Console initialized.")
+        console.print("[cyan]EZ Log Console initialized.")
         console.print(f"Listening on {host}:{port}")
         server.serve_forever()
 
@@ -279,8 +280,15 @@ def run() -> None:
     except KeyboardInterrupt:
         console.print("[bright_red]  [Quitting EZ Log Console]")
         sys.exit(0)
-    except Exception:
-        console.print(f"[bright_red]ERROR WITH CONSOLE ITSELF")
+    except Exception as e:
+        if isinstance(e, OSError) and e.errno == errno.EADDRINUSE:
+            console.print(
+                f"[bright_red]Port {9020} is already in use. Either close "
+                "that program or choose a different port."
+            )
+            sys.exit(1)
+
+        console.print("[bright_red]ERROR WITH CONSOLE ITSELF")
         console.print_exception(word_wrap=True)
         sys.exit(1)
 
